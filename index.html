@@ -206,6 +206,7 @@ function load(){
       if (!CURS[s.settings.home]) s.settings.home = {"¥":"CNY","RM":"MYR","S$":"SGD","$":"USD"}[old.currency] || "MYR";
       delete s.settings.currency;
       s.seen = s.seen || {};
+      if (!s.seenV2){ s.seen = {}; s.seenV2 = true; }
       s.fx = s.fx && s.fx.rates ? s.fx : b.fx;
       s.tx.forEach(t=>{ if(!t.cur){ t.cur=s.settings.home; t.rate=1; t.amountHome=t.amount; } });
       return s;
@@ -313,7 +314,7 @@ function regionNow(){
   if (st.regionMode!=="auto" && REGIONS[st.regionMode]) return {cc:st.regionMode, how:"手动"};
   const now = Date.now();
   if (st.geo && S.geoFix && now-S.geoFix.ts < 3*3600e3) return {cc:S.geoFix.cc, how:"定位"};
-  const recent = S.tx.filter(t=>t.curSrc==="text" && now-t.ts < 6*3600e3 && curRegion(t.cur)).sort((a,b)=>b.ts-a.ts)[0];
+  const recent = S.tx.filter(t=>t.curSrc==="text" && t.cat!=="wallet" && t.src!=="ocr" && now-t.ts < 6*3600e3 && curRegion(t.cur)).sort((a,b)=>b.ts-a.ts)[0];
   if (recent) return {cc:curRegion(recent.cur), how:"最近交易"};
   let tz = ""; try{ tz = Intl.DateTimeFormat().resolvedOptions().timeZone||""; }catch(e){}
   if (/Singapore/.test(tz)) return {cc:"SG", how:"时区"};
@@ -363,7 +364,7 @@ function parseTx(raw, src){
     const m = t.match(re);
     if (!m) continue;
     if (k==="transfer" || k==="refund"){ kind = k; break; }
-    if (k==="topup"){ if (src!=="ocr" || /reload successful|top ?-?up successful|充值成功/i.test(t)) { kind = "topup"; break; } continue; }
+    if (k==="topup"){ if (src!=="ocr" || !/paid to|pay to|merchant(?: name)?\s*[:：]|recipient|收款方|商户|商家/i.test(t)) { kind = "topup"; break; } continue; }
     if (m.index < firstPos){ firstPos = m.index; kind = k; }
   }
 
@@ -431,6 +432,7 @@ function parseTx(raw, src){
     else if (/ZFB/.test(t)) merchant = "支付宝";
   }
   if (kind==="expense" && src!=="ocr" && TOPUP_MERCH.test(merchant+" "+t) && !/toll|tol\b/i.test(t)) kind = "topup";
+  if (kind==="topup" && /\bTNG\b|Touch ?'?n ?Go/i.test(t)) merchant = "TNG eWallet";
   return {ok:true, kind, amount:r2(best.v), cur, curSrc, merchant};
 }
 function guessCat(str){
@@ -511,11 +513,11 @@ function importFixed(json){
 function capture(inp){
   const now = Date.now();
   for (const k in S.seen) if (now - S.seen[k] > 3*864e5) delete S.seen[k];
-  let tx, r;
+  let tx, r, seenKey = null;
   if (inp.src==="sms" || inp.src==="ocr"){
     const key = "s"+hash(inp.raw);
     if (S.seen[key]) { render(); return openInfo({info:"这笔已经记过了，不会重复扣钱。"}); }
-    S.seen[key] = now;
+    seenKey = key;
     r = parseTx(inp.raw, inp.src);
     if (!r.ok) { save(); render(); return openInfo({bad:r.reason, raw:inp.raw}); }
     const isIn = r.kind==="income"||r.kind==="refund";
@@ -540,22 +542,23 @@ function capture(inp){
     if (inp.src==="pay" && TOPUP_MERCH.test(inp.merchant)) r = {kind:"topup"};
   }
   setHomeAmount(tx);
-  if (r && r.kind==="transfer"){ save(); render(); return openInfo({info:`信用卡还款 ${money(tx.amount,tx.cur)} 不算新消费（刷卡时已经记过了）。`, forceTx:tx}); }
+  if (r && r.kind==="transfer"){ save(); render(); return openInfo({info:`信用卡还款 ${money(tx.amount,tx.cur)} 不算新消费（刷卡时已经记过了）。`, forceTx:tx, seenKey}); }
   if (r && r.kind==="topup"){
     if (S.settings.topupAsSpend){
       tx.kind = "expense"; tx.cat = "wallet"; tx.need = null;
       if (!/TNG|Touch|钱包|wallet/i.test(tx.merchant)) tx.merchant = (tx.merchant ? tx.merchant+" " : "") + "钱包充值";
       tx.note = "充值即算消费";
-    } else { save(); render(); return openInfo({info:`这是电子钱包充值（${esc(tx.merchant)} ${money(tx.amount,tx.cur)}），只是把钱换个地方放，不算消费。之后用钱包付款时再记。`, forceTx:tx}); }
+    } else { save(); render(); return openInfo({info:`这是电子钱包充值（${esc(tx.merchant)} ${money(tx.amount,tx.cur)}），只是把钱换个地方放，不算消费。之后用钱包付款时再记。`, forceTx:tx, seenKey}); }
   } else if (inp.src==="ocr" && S.settings.topupAsSpend && tx.kind==="expense" && /\bTNG\b|Touch ?'?n ?Go|eWallet/i.test(inp.raw)){
     save(); render();
-    return openInfo({info:`你开了「TNG 充值算消费」：这笔 TNG 付款（${esc(tx.merchant)} ${money(tx.amount,tx.cur)}）在充值时已经算过了，不再重复扣。`, forceTx:tx});
+    return openInfo({info:`你开了「TNG 充值算消费」：这笔 TNG 付款（${esc(tx.merchant)} ${money(tx.amount,tx.cur)}）在充值时已经算过了，不再重复扣。`, forceTx:tx, seenKey});
   }
   if (tx.kind==="expense"){
     const dup = S.tx.find(o => o.kind==="expense" && o.src!==tx.src && ["sms","pay","ocr"].includes(o.src) && o.cur===tx.cur && Math.abs(o.amount-tx.amount)<0.005 && Math.abs(o.ts-tx.ts)<5*60e3);
-    if (dup){ save(); render(); return openInfo({info:`${money(tx.amount,tx.cur)} 这笔刚刚已经记过（${SRC[dup.src]} 和 ${SRC[tx.src]} 都通知了），没有重复扣。`, forceTx:tx}); }
+    if (dup){ save(); render(); return openInfo({info:`${money(tx.amount,tx.cur)} 这笔刚刚已经记过（${SRC[dup.src]} 和 ${SRC[tx.src]} 都通知了），没有重复扣。`, forceTx:tx, seenKey}); }
     if (S.settings.fixed.some(f=>Math.abs((+f.amount||0)-((f.cur||HOME())===tx.cur?tx.amount:tx.amountHome))<0.005)) tx.fixed = true;
   }
+  if (seenKey) S.seen[seenKey] = now;
   S.tx.push(tx); save(); render();
   openEditor("capture", tx);
 }
@@ -964,7 +967,7 @@ function openInfo(ex){
     ${ex.forceTx?`<button class="btn sec block" id="force" style="margin-top:8px">其实是一笔消费，照样记</button>`:""}
     <div class="row" style="margin-top:10px;gap:8px">${ex.bad?`<button class="btn sec" style="flex:1" id="go-manual">手动记一笔</button>`:""}<button class="btn" style="flex:1" data-close>好的</button></div></div></div>`;
   $("#go-manual") && ($("#go-manual").onclick = ()=>openEditor("add", null));
-  $("#force") && ($("#force").onclick = ()=>{ const t=ex.forceTx; t.kind="expense"; S.tx.push(t); save(); render(); openEditor("capture", t); });
+  $("#force") && ($("#force").onclick = ()=>{ const t=ex.forceTx; t.kind="expense"; if (ex.seenKey) S.seen[ex.seenKey]=Date.now(); S.tx.push(t); save(); render(); openEditor("capture", t); });
   bindClose();
 }
 function openEditor(mode, tx){
