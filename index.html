@@ -182,6 +182,7 @@ const CATS = [
   {id:"health", n:"医疗",     e:"💊", need:"need", kw:/医院|诊所|药|医疗|体检|牙|clinic|hospital|pharmacy|farmasi|klinik|dental|polyclinic|caring|alpro|big pharmacy/i},
   {id:"study",  n:"学习",     e:"📚", need:"need", kw:/书|课|培训|教育|学费|考试|udemy|coursera|tuition|school|university|course/i},
   {id:"social", n:"人情社交", e:"🎁", need:"want", kw:/红包|礼物|礼品|请客|聚餐|鲜花|花店|angpao|ang pow|gift|florist/i},
+  {id:"wallet", n:"钱包充值", e:"👛", need:"want", kw:null},
   {id:"other",  n:"其他",     e:"📦", need:"want", kw:null},
 ];
 const INCOME_CATS = [{id:"salary",n:"工资",e:"💼"},{id:"side",n:"副业",e:"🧰"},{id:"refund",n:"退款",e:"↩️"},{id:"gift",n:"红包转账",e:"🧧"},{id:"inc_other",n:"其他收入",e:"💵"}];
@@ -191,7 +192,7 @@ const catOf = id => CATS.find(c=>c.id===id) || INCOME_CATS.find(c=>c.id===id) ||
 
 function blank(){
   return {
-    settings:{home:"MYR",income:0,savings:0,payday:1,fixed:[],setupDone:false,regionMode:"auto",geo:false},
+    settings:{home:"MYR",income:0,savings:0,payday:1,fixed:[],setupDone:false,regionMode:"auto",geo:false,topupAsSpend:true},
     tx:[], seen:{}, fx:{rates:{...FX_DEFAULT}, ts:0, live:false}, geoFix:null,
   };
 }
@@ -540,7 +541,16 @@ function capture(inp){
   }
   setHomeAmount(tx);
   if (r && r.kind==="transfer"){ save(); render(); return openInfo({info:`信用卡还款 ${money(tx.amount,tx.cur)} 不算新消费（刷卡时已经记过了）。`, forceTx:tx}); }
-  if (r && r.kind==="topup"){ save(); render(); return openInfo({info:`这是电子钱包充值（${esc(tx.merchant)} ${money(tx.amount,tx.cur)}），只是把钱换个地方放，不算消费。之后用钱包付款时再记。`, forceTx:tx}); }
+  if (r && r.kind==="topup"){
+    if (S.settings.topupAsSpend){
+      tx.kind = "expense"; tx.cat = "wallet"; tx.need = null;
+      if (!/TNG|Touch|钱包|wallet/i.test(tx.merchant)) tx.merchant = (tx.merchant ? tx.merchant+" " : "") + "钱包充值";
+      tx.note = "充值即算消费";
+    } else { save(); render(); return openInfo({info:`这是电子钱包充值（${esc(tx.merchant)} ${money(tx.amount,tx.cur)}），只是把钱换个地方放，不算消费。之后用钱包付款时再记。`, forceTx:tx}); }
+  } else if (inp.src==="ocr" && S.settings.topupAsSpend && tx.kind==="expense" && /\bTNG\b|Touch ?'?n ?Go|eWallet/i.test(inp.raw)){
+    save(); render();
+    return openInfo({info:`你开了「TNG 充值算消费」：这笔 TNG 付款（${esc(tx.merchant)} ${money(tx.amount,tx.cur)}）在充值时已经算过了，不再重复扣。`, forceTx:tx});
+  }
   if (tx.kind==="expense"){
     const dup = S.tx.find(o => o.kind==="expense" && o.src!==tx.src && ["sms","pay","ocr"].includes(o.src) && o.cur===tx.cur && Math.abs(o.amount-tx.amount)<0.005 && Math.abs(o.ts-tx.ts)<5*60e3);
     if (dup){ save(); render(); return openInfo({info:`${money(tx.amount,tx.cur)} 这笔刚刚已经记过（${SRC[dup.src]} 和 ${SRC[tx.src]} 都通知了），没有重复扣。`, forceTx:tx}); }
@@ -738,7 +748,7 @@ function insights(k, flex, by, total, reg){
   if (subs.length) out.push(["📺",`订阅/会员 ${subs.length} 笔共 ${money(sum(subs))}。检查有没有不用了还在自动续费的（iPhone：设置 → 你的名字 → 订阅）。`]);
   const small = flex.filter(t=>amtH(t) < (k.planDaily>0? k.planDaily*0.25 : 10));
   if (small.length>=10) out.push(["🪙",`小额消费 ${small.length} 笔加起来 ${money(sum(small))}。小钱最容易被忽略，积少成多。`]);
-  const untagged = flex.filter(t=>!t.need).length;
+  const untagged = flex.filter(t=>!t.need && t.cat!=="wallet").length;
   if (untagged) out.push(["🏷️",`有 ${untagged} 笔还没标「必要/想要/不必要」，去账单里点一下，分析会更准。`]);
   return out;
 }
@@ -774,6 +784,10 @@ function viewSettings(){
     <button class="btn block" id="s-save" style="margin-top:12px">保存预算</button>
   </div>
 
+  <div class="card">
+    <h2>👛 TNG 等电子钱包</h2>
+    <label class="toggle"><span><b>充值时就算花掉</b><br><span class="sub">用卡给 TNG 充值 RM50，就记 RM50 消费；之后用 TNG 付款不用再记（截图记账也会自动跳过 TNG）。全自动，但看不到每笔花在哪。</span></span><input type="checkbox" id="s-topup" ${st.topupAsSpend?"checked":""}></label>
+  </div>
   <div class="card">
     <h2>📍 新马自动切换</h2>
     <p class="hint">每笔交易的币种会自动识别（RM / S$ / SGD / MYR，PayNow 认作新币，TNG / DuitNow 认作马币），然后按汇率换算成${CURS[h].n}扣每日额度。首页的「今天还能花」会用你<b>当前所在国家</b>的货币显示。</p>
@@ -813,14 +827,15 @@ function viewSettings(){
     </ol>
     <div class="code">${esc(base)}#ocr=</div>
     <button class="btn sec sm" data-copy="${esc(base)}#ocr=">复制网址</button>
-    <p class="hint">用 TNG 时如果是用卡<b>充值</b> TNG，那笔不算消费（App 会自动忽略），真正用 TNG 付款时截图记账才算。</p>
+    <p class="hint">如果开了「TNG 充值算消费」，TNG 付款截图会自动跳过，不会重复扣。</p>
 
-    <h2 style="margin-top:18px">③ 银行短信 / 邮件提醒（可选）</h2>
-    <p class="hint">如果你的银行（Maybank、CIMB、DBS、OCBC、UOB…）会发扣款短信或邮件，也可以全自动：</p>
+    <h2 style="margin-top:18px">③ 银行短信 / 邮件 → PayNow、刷卡全自动</h2>
+    <p class="hint">先在银行 App（DBS、CIMB、Maybank…）的通知设置里，把<b>转账 / PayNow / 刷卡提醒</b>设成用<b>短信或电子邮件</b>发送，金额门槛设到最低。然后：</p>
     <ol class="steps">
-      <li>「自动化」→ ＋ → 选「<b>信息</b>」（短信）或「<b>电子邮件</b>」→ 设置发件人或「包含」关键词（例如 <b>RM</b>、<b>SGD</b>、<b>PayNow</b>）→「立即运行」。</li>
+      <li>「自动化」→ ＋ → 选「<b>信息</b>」（短信）或「<b>电子邮件</b>」→ 设置发件人或「包含」关键词（新加坡银行填 <b>SGD</b>，马来西亚银行填 <b>RM</b>，每个关键词做一个自动化）→「立即运行」。验证码短信会自动忽略。</li>
       <li>添加「URL 编码」，输入选「快捷指令输入」→「<b>内容</b>」。</li>
       <li>添加「打开 URL」，网址填下面这段，后面接编码后的文本。</li>
+      <li><b>跳过验证码</b>：加一个「<b>如果（If）</b>」操作：「快捷指令输入」<b>不包含</b>「OTP」，把「打开 URL」拖进「如果」里面。这样收到验证码时不会弹出 App，打断你输入验证码。</li>
     </ol>
     <div class="code">${esc(base)}#sms=</div>
     <button class="btn sec sm" data-copy="${esc(base)}#sms=">复制网址</button>
@@ -886,6 +901,7 @@ function bindSettings(){
     if (!st.income){ toast("请填写每月收入"); return; }
     st.setupDone = true; save(); toast("✅ 已保存，每天能花 "+money(calc().planDaily)); tab="home"; render(); scrollTo(0,0);
   };
+  $("#s-topup").onchange = e => { collect(); st.topupAsSpend = e.target.checked; save(); toast(st.topupAsSpend?"✅ TNG 充值时就算消费":"已关闭：TNG 付款要截图记账"); };
   $("#s-geo").onchange = e => { collect(); st.geo = e.target.checked; save(); if (st.geo) refreshGeo(true); else { S.geoFix=null; save(); } render(); };
   $("#fx-refresh").onclick = () => { collect(); refreshFx(true); };
   document.querySelectorAll("[data-fxset]").forEach(b=>b.onclick=()=>{
