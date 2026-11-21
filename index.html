@@ -6,6 +6,9 @@
 <meta name="theme-color" content="#f6f5f2" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#141413" media="(prefers-color-scheme: dark)">
 <title>每日钱包</title>
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="apple-mobile-web-app-title" content="每日钱包">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231f7a5c'/%3E%3Ctext x='32' y='44' font-size='34' text-anchor='middle' fill='white' font-family='sans-serif'%3E%C2%A5%3C/text%3E%3C/svg%3E">
 <style>
 :root{
@@ -317,6 +320,7 @@ function regionNow(){
   return {cc: curRegion(HOME()) || "MY", how:"默认"};
 }
 const localCur = () => REGIONS[regionNow().cc].cur;
+const isStandalone = () => { try{ return navigator.standalone===true || matchMedia("(display-mode: standalone)").matches || matchMedia("(display-mode: fullscreen)").matches; }catch(e){ return false; } };
 
 /* ========== 交易识别（短信 / 邮件 / 截图文字） ========== */
 const CURTOK = "人民币|RMB|CNY|￥|¥|RM|MYR|SGD|S\\$|USD|US\\$|HKD|HK\\$|\\$";
@@ -577,6 +581,7 @@ function viewHome(){
   <h1>${md(now)} 星期${WK[now.getDay()]}</h1>
   <div class="sub">本周期第 ${k.dayNo}/${k.totalDays} 天 · 还剩 ${k.daysLeft} 天（${md(k.start)} – ${md(addDays(k.end,-1))}）</div>
   ${whereChip()}
+  ${isStandalone() ? `<div class="card" style="border-color:var(--waste);background:var(--waste-bg)"><b style="color:var(--waste)">⚠️ 你现在用的是「Web App」模式</b><div class="hint" style="color:var(--ink)">这个模式的数据和 Safari 是分开的，自动记账（Apple Pay / 截图）记进的是 Safari，这里会看不到。<br><br>请长按桌面图标 → 删除，然后用 Safari 打开本页 → 分享 → 添加到主屏幕，并<b>关掉「作为 Web App 打开」</b>。${S.tx.length?"<br>（这里已有的记录，可以先到 设置 → 备份数据，再到 Safari 里恢复。）":""}</div></div>`:""}
   ${!st.setupDone ? `<div class="card"><b>👋 先花 1 分钟设置预算</b><div class="hint">填好月收入、固定支出和每月要存的钱，才能算出你每天能花多少。</div><button class="btn block" style="margin-top:12px" data-go="settings">去设置</button></div>`:""}
   <div class="card hero ${cls}">
     <div class="label">${k.left<0?"今天已超支":"今天还能花"}</div>

@@ -24,7 +24,7 @@
 
 1. **开启 GitHub Pages**：仓库 Settings → Pages → Source 选 *Deploy from a branch* → Branch 选 `claude/personal-finance-app-mkavvj`、目录 `/ (root)` → Save。
    一两分钟后网址就是：`https://woonguan7379-boop.github.io/file-convert/`
-2. 用 **Safari** 打开这个网址并加书签（不要用「作为 Web App 打开」，否则数据和快捷指令打开的 Safari 是分开的）。
+2. 用 **Safari** 打开这个网址 → 分享 → 添加到主屏幕，**关掉「作为 Web App 打开」**（否则桌面图标的数据和快捷指令打开的 Safari 是分开的，App 会显示警告）。
 3. 在「设置」里填写月收入、发薪日、存款目标和固定支出。
 4. 按「设置 → 自动记账设置」里的步骤，在快捷指令 App 中设置自动化。
 
