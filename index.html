@@ -125,7 +125,8 @@ details.card summary{cursor:pointer;font-weight:600;list-style:none}
 details.card summary::-webkit-details-marker{display:none}
 details.card summary::after{content:"›";float:right;color:var(--muted);transition:transform .2s}
 details.card[open] summary::after{transform:rotate(90deg)}
-.fixed-row{display:grid;grid-template-columns:1fr 110px 36px;gap:8px;margin:6px 0}
+.fixed-row{display:grid;grid-template-columns:1fr 82px 74px 34px;gap:6px;margin:6px 0}
+.fixed-row select.in{padding:11px 4px}
 .x{border:0;background:var(--soft);border-radius:10px;cursor:pointer;color:var(--muted)}
 .empty{text-align:center;color:var(--muted);padding:18px 0;font-size:14px}
 .daygrp{display:flex;justify-content:space-between;font-size:13px;color:var(--muted);margin:16px 4px 4px;font-weight:600}
@@ -414,6 +415,7 @@ function parseTx(raw, src){
     /向([^，,。]{1,30}?)(?:付款|支付|转账)/,
     /\bat\s+([A-Za-z0-9][A-Za-z0-9 &'.*\-]{1,40}?)(?=\s+(?:on|using|with|via|for|at|ref)\b|[.,;]|$)/i,
     /\b(?:merchant|to)[:\s]+([A-Za-z0-9][A-Za-z0-9 &'.*\-]{1,40}?)(?=\s+(?:on|at|via|using|ref|from)\b|[.,;]|$)/i,
+    /\b(?:debited|charged|paid|payment)\s+for\s+([A-Za-z0-9][A-Za-z0-9 &'.*\-]{1,40}?)(?=\s+(?:on|at|via|using|ref)\b|[.,;]|$)/i,
     /\bfrom\s+([A-Za-z0-9][A-Za-z0-9 &'.*\-]{1,40}?)(?=\s+(?:on|at|via|using|ref|to)\b|[.,;]|$)/i,
   ];
   for (const p of pats){ if (merchant) break; const mm = t.match(p); if (mm) merchant = mm[1].trim(); }
@@ -445,7 +447,8 @@ function cycle(now){
   const end = mk(start.getFullYear(), start.getMonth()+1);
   return {start, end};
 }
-const fixedTotal = () => S.settings.fixed.reduce((a,f)=>a+(+f.amount||0),0);
+const fixedHome = f => conv(+f.amount||0, f.cur||HOME(), HOME());
+const fixedTotal = () => S.settings.fixed.reduce((a,f)=>a+fixedHome(f),0);
 const eff = tx => tx.kind==="expense" && !tx.fixed ? amtH(tx) : tx.kind==="refund" ? -amtH(tx) : 0;
 function calc(now=new Date()){
   const st = S.settings;
@@ -485,8 +488,24 @@ function readHash(){
   for (const part of h.split("&")){ const i=part.indexOf("="); if(i>0) p[part.slice(0,i)] = dec(part.slice(i+1)); }
   if (p.sms) return capture({src:"sms", raw:p.sms});
   if (p.ocr) return capture({src:"ocr", raw:p.ocr});
+  if (p.fixed) return importFixed(p.fixed);
   if (p.add!=null) return capture({src: p.src==="pay"?"pay":"cash", amountStr:p.add, merchant:p.m||"", note:p.note||"", cur:p.cur||""});
   if (p.tab && ["home","list","stats","settings"].includes(p.tab)) { tab = p.tab; render(); }
+}
+function importFixed(json){
+  let d; try{ d = JSON.parse(json); }catch(e){ toast("导入链接格式不对"); return; }
+  const items = (Array.isArray(d)?d:d.items||[]).filter(f=>f && f.name && +f.amount>0 && (!f.cur||CURS[f.cur])).map(f=>({name:String(f.name).slice(0,40), amount:r2(+f.amount), cur:f.cur||HOME()}));
+  if (!items.length) { toast("导入链接里没有固定支出"); return; }
+  const home = d.home && CURS[d.home] ? d.home : null;
+  const msg = "要导入以下每月固定支出吗？\n\n" + items.map(f=>`· ${f.name}  ${money(f.amount,f.cur)}`).join("\n")
+    + (home && home!==S.settings.home ? `\n\n并把收入货币设为 ${CURS[home].n}` : "")
+    + (S.settings.fixed.length ? "\n\n（会替换现在已填的固定支出）" : "");
+  setTimeout(()=>{
+    if (!confirm(msg)) return;
+    if (home && home!==S.settings.home){ S.settings.home = home; S.tx.forEach(setHomeAmount); }
+    S.settings.fixed = items; save(); tab = "settings"; render(); scrollTo(0,0);
+    toast("✅ 已导入 "+items.length+" 项固定支出，再填收入和存款就好");
+  }, 300);
 }
 function capture(inp){
   const now = Date.now();
@@ -525,7 +544,7 @@ function capture(inp){
   if (tx.kind==="expense"){
     const dup = S.tx.find(o => o.kind==="expense" && o.src!==tx.src && ["sms","pay","ocr"].includes(o.src) && o.cur===tx.cur && Math.abs(o.amount-tx.amount)<0.005 && Math.abs(o.ts-tx.ts)<5*60e3);
     if (dup){ save(); render(); return openInfo({info:`${money(tx.amount,tx.cur)} 这笔刚刚已经记过（${SRC[dup.src]} 和 ${SRC[tx.src]} 都通知了），没有重复扣。`, forceTx:tx}); }
-    if (S.settings.fixed.some(f=>Math.abs((+f.amount||0)-tx.amountHome)<0.005)) tx.fixed = true;
+    if (S.settings.fixed.some(f=>Math.abs((+f.amount||0)-((f.cur||HOME())===tx.cur?tx.amount:tx.amountHome))<0.005)) tx.fixed = true;
   }
   S.tx.push(tx); save(); render();
   openEditor("capture", tx);
@@ -676,7 +695,7 @@ function viewStats(){
     ${catList.length ? catList.map(([id,v])=>{const c=catOf(id);return `<div class="hbar"><span>${c.e} ${c.n}</span><div class="track"><i style="width:${(v/maxCat*100).toFixed(1)}%"></i></div><span class="v">${money(v)}</span></div>`}).join("") : `<div class="empty">本周期还没有消费</div>`}
   </div>
   ${merList.length?`<div class="card"><h2>花钱最多的商家</h2>${merList.map(([m,o])=>`<div class="row" style="padding:7px 0;border-top:1px solid var(--line)"><span>${esc(m)} <span class="sub">${o.n} 次</span></span><b>${money(o.s)}</b></div>`).join("")}</div>`:""}
-  ${st.fixed.length?`<div class="card"><h2>固定支出（每月 ${money(fixedTotal())}）</h2>${st.fixed.map(f=>`<div class="row" style="padding:5px 0"><span>${esc(f.name)}</span><span>${money(+f.amount||0)}</span></div>`).join("")}</div>`:""}`;
+  ${st.fixed.length?`<div class="card"><h2>固定支出（每月 ${money(fixedTotal())}）</h2>${st.fixed.map(f=>`<div class="row" style="padding:5px 0"><span>${esc(f.name)}</span><span>${money(+f.amount||0, f.cur||HOME())}${(f.cur||HOME())!==HOME()?` <span class="conv">≈ ${money(fixedHome(f))}</span>`:""}</span></div>`).join("")}</div>`:""}`;
 }
 function insights(k, flex, by, total, reg){
   const out = [];
@@ -741,8 +760,8 @@ function viewSettings(){
     <select class="in" id="s-payday">${Array.from({length:28},(_,i)=>`<option value="${i+1}" ${+st.payday===i+1?"selected":""}>每月 ${i+1} 号</option>`).join("")}</select>
     <label class="f">每月要存下的钱（${sym}）<span class="sub">建议收入的 20%${st.income?`：${money(st.income*0.2)}`:""}</span></label>
     <input class="in" id="s-savings" inputmode="decimal" placeholder="例如 1000" value="${st.savings||""}">
-    <label class="f">固定支出（${sym}）<span class="sub">房租、车贷、分期、保险、电话费……</span></label>
-    <div id="fixed-list">${st.fixed.map((f,i)=>`<div class="fixed-row"><input class="in" data-fx="name" data-i="${i}" value="${esc(f.name)}" placeholder="名称"><input class="in" data-fx="amount" data-i="${i}" inputmode="decimal" value="${f.amount||""}" placeholder="金额"><button class="x" data-fxdel="${i}" aria-label="删除">✕</button></div>`).join("")}</div>
+    <label class="f">固定支出 <span class="sub">房租、家用、贷款、保险、电话费、订阅……每项可以选币种。<b>吃饭交通不要放这里</b>，那是每日额度要管的。</span></label>
+    <div id="fixed-list">${st.fixed.map((f,i)=>`<div class="fixed-row"><input class="in" data-fx="name" data-i="${i}" value="${esc(f.name)}" placeholder="名称"><input class="in" data-fx="amount" data-i="${i}" inputmode="decimal" value="${f.amount||""}" placeholder="金额"><select class="in" data-fx="cur" data-i="${i}">${Object.keys(CURS).map(c=>`<option value="${c}" ${(f.cur||h)===c?"selected":""}>${CURS[c].sym}</option>`).join("")}</select><button class="x" data-fxdel="${i}" aria-label="删除">✕</button></div>`).join("")}</div>
     <button class="btn sec sm" id="fx-add" style="margin-top:4px">＋ 添加固定支出</button>
     <div class="card" style="background:var(--soft);border:0;box-shadow:none;margin-bottom:0">
       <div class="row"><span>收入</span><span>${money(+st.income||0)}</span></div>
@@ -844,6 +863,7 @@ function bindSettings(){
     document.querySelectorAll("[data-fx]").forEach(el=>{
       const i=+el.dataset.i; if(!st.fixed[i]) return;
       st.fixed[i][el.dataset.fx] = el.dataset.fx==="amount" ? num(el.value) : el.value.trim();
+      if (!st.fixed[i].cur) st.fixed[i].cur = st.home;
     });
   };
   const collect = () => {
@@ -858,7 +878,7 @@ function bindSettings(){
     if (S.tx.length && !confirm(`改成${CURS[nh].n}后，所有记录会按现在的汇率重新换算。确定吗？`)) { e.target.value = st.home; return; }
     st.home = nh; S.tx.forEach(setHomeAmount); save(); render();
   };
-  $("#fx-add").onclick = () => { collect(); st.fixed.push({name:"",amount:0}); save(); render(); const r=document.querySelectorAll('[data-fx="name"]'); r.length && r[r.length-1].focus(); };
+  $("#fx-add").onclick = () => { collect(); st.fixed.push({name:"",amount:0,cur:localCur()}); save(); render(); const r=document.querySelectorAll('[data-fx="name"]'); r.length && r[r.length-1].focus(); };
   document.querySelectorAll("[data-fxdel]").forEach(b=>b.onclick=()=>{ collect(); st.fixed.splice(+b.dataset.fxdel,1); save(); render(); });
   $("#s-save").onclick = () => {
     collect();
