@@ -346,7 +346,7 @@ const TOPUP_MERCH = /TNG ?DIGITAL|TNGD|TOUCH ?'?N ?GO|YOUTRIP|BIGPAY|WISE ?TOP/i
 function parseTx(raw, src){
   const rawStr = String(raw||"");
   const text = rawStr.replace(/\s+/g," ").trim();
-  if (!text) return {ok:false, reason:"内容是空的"};
+  if (!text) return {ok:false, reason:"没有收到文字。请检查快捷指令里的 Text：「#ocr=」或「#sms=」和蓝色的「URL Encoded Text」之间不能有空格或换行，要紧紧连在一起。"};
   const t = text.replace(/支付宝/g,"ZFB").replace(/微信支付/g,"WXP");
   if (/验证码|校验码|动态码|动态密码|\bOTP\b|\bTAC\b|verification code|one-time password/i.test(t) && !/余额|balance|successful/i.test(t))
     return {ok:false, reason:"这是验证码短信，不是交易"};
